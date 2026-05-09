@@ -108,10 +108,10 @@ function 建立工作表示範() {
 }
 
 /**
- * 自動建立每月報表工作表
- * 說明：根據目前月份，自動建立當月的工作表（含標題與格式）
+ * 自動建立每週報表工作表
+ * 說明：根據目前日期，自動建立週報表（含日期、事項、負責人、進度）
  */
-function 自動建立月報表() {
+function 自動建立週報表() {
   try {
     var ss = SpreadsheetApp.getActiveSpreadsheet();
     var 員工表 = ss.getSheetByName("員工資料");
@@ -121,20 +121,21 @@ function 自動建立月報表() {
       return;
     }
 
-    // 1. 取得員工基本資料
+    // 1. 取得員工姓名作為負責人
     var 最後一列 = 員工表.getLastRow();
     if (最後一列 < 2) {
       SpreadsheetApp.getUi().alert("⚠️ 員工資料中沒有數據。");
       return;
     }
-    // 取得資料 (姓名、部門、月薪分別在第 1, 2, 5 欄)
-    var 員工原始資料 = 員工表.getRange(2, 1, 最後一列 - 1, 5).getValues();
+    // 取得姓名 (在第 1 欄)
+    var 員工姓名 = 員工表.getRange(2, 1, 最後一列 - 1, 1).getValues();
 
     // 2. 準備新工作表
     var 今天 = new Date();
     var 年 = 今天.getFullYear();
     var 月 = 今天.getMonth() + 1;
-    var 表名 = 年 + "年" + 月 + "月薪資報表";
+    // 格式化表名：2026年5月週報表_0509
+    var 表名 = 年 + "年" + 月 + "月週報表_" + Utilities.formatDate(今天, "GMT+8", "MMdd");
 
     // 檢查工作表是否已存在
     var 既有表 = ss.getSheetByName(表名);
@@ -146,46 +147,128 @@ function 自動建立月報表() {
     var 新表 = ss.insertSheet(表名);
 
     // 3. 設定標題列與格式
-    var 標題 = [["姓名", "部門", "基本月薪", "加班津貼", "應領金額"]];
-    新表.getRange("A1:E1").setValues(標題);
+    var 標題 = [["日期", "事項", "負責人", "進度(%)"]];
+    新表.getRange("A1:D1").setValues(標題);
     
-    var 標題範圍 = 新表.getRange("A1:E1");
-    標題範圍.setBackground("#34a853").setFontColor("#ffffff").setFontWeight("bold").setHorizontalAlignment("center");
+    var 標題範圍 = 新表.getRange("A1:D1");
+    // 使用高級感的深藍色背景
+    標題範圍.setBackground("#1a73e8").setFontColor("#ffffff").setFontWeight("bold").setHorizontalAlignment("center");
 
     // 4. 準備並寫入報表內容
     var 報表內容 = [];
-    for (var i = 0; i < 員工原始資料.length; i++) {
-      var 姓名 = 員工原始資料[i][0];
-      var 部門 = 員工原始資料[i][1];
-      var 月薪 = 員工原始資料[i][4];
+    var 今日字串 = Utilities.formatDate(今天, "GMT+8", "yyyy/MM/dd");
+    
+    for (var i = 0; i < 員工姓名.length; i++) {
+      var 負責人 = 員工姓名[i][0];
+      var 事項 = "專案任務 " + (i + 1);
+      // 隨機產生 0.0 ~ 1.0 的進度
+      var 進度 = Math.floor(Math.random() * 101) / 100;
       
-      // 示範：隨機產生一些加班津貼
-      var 加班費 = Math.floor(Math.random() * 3000) + 1000;
-      var 總計 = 月薪 + 加班費;
-      
-      報表內容.push([姓名, 部門, 月薪, 加班費, 總計]);
+      報表內容.push([今日字串, 事項, 負責人, 進度]);
     }
 
     // 寫入所有資料
-    新表.getRange(2, 1, 報表內容.length, 5).setValues(報表內容);
+    if (報表內容.length > 0) {
+      新表.getRange(2, 1, 報表內容.length, 4).setValues(報表內容);
 
-    // 5. 最後修飾
-    新表.getRange(2, 3, 報表內容.length, 3).setNumberFormat("#,##0"); // 格式化金額
-    新表.setFrozenRows(1); // 凍結首列
-    
-    for (var j = 1; j <= 5; j++) {
-      新表.autoResizeColumn(j);
-      var 目前寬度 = 新表.getColumnWidth(j);
-      新表.setColumnWidth(j, 目前寬度 + 30); // 增加 30 像素緩衝
+      // 5. 最後修飾
+      新表.getRange(2, 4, 報表內容.length, 1).setNumberFormat("0%"); // 格式化為百分比
+      新表.getRange(2, 1, 報表內容.length, 4).setHorizontalAlignment("center"); // 置中對齊
+      新表.setFrozenRows(1); // 凍結首列
+      
+      // 自動調整欄寬
+      for (var j = 1; j <= 4; j++) {
+        新表.autoResizeColumn(j);
+        var 目前寬度 = 新表.getColumnWidth(j);
+        新表.setColumnWidth(j, 目前寬度 + 30);
+      }
     }
 
-    Logger.log("✅ 「" + 表名 + "」建立完成，共計 " + 報表內容.length + " 位員工。");
+    Logger.log("✅ 「" + 表名 + "」建立完成，共計 " + 報表內容.length + " 筆任務。");
     SpreadsheetApp.getUi().alert("✅ 「" + 表名 + "」建立完成！");
 
   } catch (錯誤) {
     Logger.log("❌ 錯誤：" + 錯誤.message);
     SpreadsheetApp.getUi().alert("❌ 錯誤：" + 錯誤.message);
   }
+}
+
+/**
+ * 練習 2：工作表複製
+ * 說明：將「員工資料」工作表複製一份，命名為「員工資料_備份_日期」
+ */
+function 備份員工資料() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var 來源表 = ss.getSheetByName("員工資料");
+  
+  if (!來源表) {
+    SpreadsheetApp.getUi().alert("❌ 找不到「員工資料」工作表，無法進行備份。");
+    return;
+  }
+
+  // 1. 產生日期字串
+  var 今天 = new Date();
+  var 日期字串 = Utilities.formatDate(今天, "GMT+8", "yyyyMMdd");
+  var 備份名稱 = "員工資料_備份_" + 日期字串;
+
+  // 2. 檢查是否已有同名的備份，若有則先刪除舊的
+  var 舊備份 = ss.getSheetByName(備份名稱);
+  if (舊備份) {
+    ss.deleteSheet(舊備份);
+  }
+
+  // 3. 執行複製
+  var 備份表 = 來源表.copyTo(ss);
+  備份表.setName(備份名稱);
+
+  // 4. (選配) 將備份表移到所有工作表的最後面
+  var 所有表 = ss.getSheets();
+  ss.setActiveSheet(備份表);
+  ss.moveActiveSheet(所有表.length);
+
+  Logger.log("✅ 備份完成：「" + 備份名稱 + "」");
+  SpreadsheetApp.getUi().alert("✅ 備份完成！\n新工作表名稱為：「" + 備份名稱 + "」");
+}
+
+/**
+ * 練習 3：跨工作表複製
+ * 說明：將 A 工作表的資料複製到 B 工作表的指定位置
+ */
+function 跨工作表複製資料() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var 來源表 = ss.getSheetByName("員工資料");
+  
+  // 1. 準備目標工作表
+  var 目標表 = ss.getSheetByName("跨表複製練習");
+  if (!目標表) {
+    目標表 = ss.insertSheet("跨表複製練習");
+  } else {
+    目標表.clear(); // 清空舊資料以便示範
+  }
+
+  if (!來源表) {
+    SpreadsheetApp.getUi().alert("❌ 找不到來源表：員工資料");
+    return;
+  }
+
+  // --- 方法 A：純資料複製 (適合處理大量數據) ---
+  // 取得來源範圍：前 5 欄 (姓名到月薪)，包含標題
+  var 來源範圍 = 來源表.getRange(1, 1, 來源表.getLastRow(), 5);
+  var 資料內容 = 來源範圍.getValues();
+
+  // 寫入目標位置：從 A1 開始貼上
+  目標表.getRange(1, 1, 資料內容.length, 資料內容[0].length).setValues(資料內容);
+
+  // --- 方法 B：含格式複製 (適合需要保留顏色、框線時) ---
+  // 取得來源範圍：電話與 Email (第 6, 7 欄)
+  var 格式範圍 = 來源表.getRange(1, 6, 來源表.getLastRow(), 2);
+  
+  // 複製到目標表的第 7 欄 (G1) 開始
+  格式範圍.copyTo(目標表.getRange(1, 7));
+
+  // 提示與調整
+  目標表.autoResizeColumns(1, 8);
+  SpreadsheetApp.getUi().alert("✅ 跨工作表複製完成！\n請查看「跨表複製練習」工作表。\n\nA~E 欄：純資料複製\nG~H 欄：含格式複製");
 }
 
 // ============================================================
@@ -461,11 +544,13 @@ function onOpen() {
   SpreadsheetApp.getUi()
     .createMenu("📚 Session 3 工具")
     .addItem("👥 初始化員工資料", "初始化員工資料")
+    .addItem("💾 備份員工資料", "備份員工資料")
+    .addItem("🔄 跨工作表複製練習", "跨工作表複製資料")
     .addItem("📋 SpreadsheetApp 基本操作", "SpreadsheetApp基本操作")
     .addItem("📊 讀取工作表資訊", "讀取工作表資訊")
     .addItem("📝 讀寫儲存格示範", "讀寫儲存格示範")
     .addSeparator()
-    .addItem("📅 建立當月報表", "自動建立月報表")
+    .addItem("📅 建立當週報表", "自動建立週報表")
     .addItem("⏰ 設定每日觸發器", "設定每日觸發器")
     .addItem("🗑️ 刪除所有觸發器", "刪除所有觸發器")
     .addToUi();
