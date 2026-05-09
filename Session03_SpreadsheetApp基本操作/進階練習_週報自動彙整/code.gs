@@ -81,6 +81,7 @@ function 建立本週週報() {
 
 /**
  * 自動彙整：合併所有部門週報到一個「週報總覽」
+ * 並建立完成率統計圖表
  */
 function 彙整週報() {
   try {
@@ -97,7 +98,10 @@ function 彙整週報() {
       Utilities.formatDate(new Date(), "Asia/Taipei", "yyyy/MM/dd HH:mm"));
 
     var 目前列 = 4;
+    var 已填報數 = 0;
+    var 未填報數 = 0;
 
+    // 取得所有週報工作表
     sheets.forEach(function(sheet) {
       if (sheet.getName().indexOf("週報_") !== 0) return;
 
@@ -121,13 +125,49 @@ function 彙整週報() {
         }
       });
 
-      if (!有資料) {
+      if (有資料) {
+        已填報數++;
+      } else {
         總覽表.getRange(目前列, 1).setValue("（尚未填寫）").setFontColor("#999");
         目前列++;
+        未填報數++;
       }
 
       目前列++; // 空一列
     });
+
+    // --- 建立統計圖表區 ---
+    if (已填報數 + 未填報數 > 0) {
+      // 先清除舊圖表，避免重複堆疊
+      var charts = 總覽表.getCharts();
+      for (var i = 0; i < charts.length; i++) {
+        總覽表.removeChart(charts[i]);
+      }
+
+      // 修正範圍為 H2:I4 (共 3 列：標題、已填報、未填報)
+      var 統計區域 = 總覽表.getRange("H2:I4");
+      統計區域.setValues([
+        ["狀態", "數量"],
+        ["已填報", 已填報數],
+        ["未填報", 未填報數]
+      ]);
+
+      // 格式化統計小表格
+      總覽表.getRange("H2:I2").setBackground("#eeeeee").setFontWeight("bold");
+      總覽表.getRange("H2:I4").setBorder(true, true, true, true, true, true);
+
+      // 建立圓餅圖
+      var chart = 總覽表.newChart()
+        .setChartType(SpreadsheetApp.ChartType.PIE)
+        .addRange(總覽表.getRange("H2:I4"))
+        .setPosition(5, 8, 0, 0) // 放在第 5 列, 第 8 欄 (H 欄)
+        .setOption('title', '週報填寫完成率')
+        .setOption('colors', ['#4CAF50', '#F44336']) // 綠色跟紅色
+        .setOption('pieHole', 0.4) // 空心圓餅圖更現代感
+        .build();
+
+      總覽表.insertChart(chart);
+    }
 
     for (var c = 1; c <= 5; c++) {
       總覽表.autoResizeColumn(c);
@@ -135,7 +175,8 @@ function 彙整週報() {
       總覽表.setColumnWidth(c, 目前寬度 + 30); // 增加 30 像素緩衝
     }
 
-    SpreadsheetApp.getUi().alert("✅ 週報彙整完成！請查看「週報總覽」工作表。");
+    SpreadsheetApp.getUi().alert("✅ 週報彙整完成！\n已統計 " + (已填報數 + 未填報數) + " 個部門，完成率 " + 
+                               Math.round((已填報數 / (已填報數 + 未填報數)) * 100) + "%");
 
   } catch (錯誤) {
     Logger.log("❌ 錯誤：" + 錯誤.message);
@@ -286,9 +327,99 @@ function onOpen() {
     .addItem("📝 新增週報範例資料", "新增週報範例資料")
     .addItem("📊 彙整所有週報", "彙整週報")
     .addSeparator()
+    .addItem("📧 發送填報提醒", "發送填報提醒")
+    .addSeparator()
     .addItem("⏰ 設定週一自動建立", "設定週一自動建立")
     .addItem("⏰ 設定週五自動彙整", "設定週五自動彙整")
+    .addItem("⏰ 設定週五提醒觸發", "設定提醒觸發器")
     .addToUi();
+}
+
+/**
+ * 自動 Email 通知未填寫週報的部門
+ * 檢查邏輯：1. 工作表不存在 2. 工作項目 (B7) 為空
+ */
+function 發送填報提醒() {
+  try {
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var 今天 = new Date();
+    var 週一 = new Date(今天);
+    週一.setDate(今天.getDate() - 今天.getDay() + 1);
+    var 週五 = new Date(週一);
+    週五.setDate(週一.getDate() + 4);
+
+    var 週區間 = Utilities.formatDate(週一, "Asia/Taipei", "MMdd") + "-" +
+                 Utilities.formatDate(週五, "Asia/Taipei", "MMdd");
+
+    // 部門與 Email 對照表 (請根據實際情況修改)
+    var 部門Email = {
+      "業務部": "sales@example.com",
+      "行銷部": "marketing@example.com",
+      "研發部": "rd@example.com",
+      "人資部": "hr@example.com",
+      "財務部": "finance@example.com"
+    };
+
+    var 未填寫部門 = [];
+    var 試算表URL = ss.getUrl();
+
+    Object.keys(部門Email).forEach(function(部門名) {
+      var 表名 = "週報_" + 部門名 + "_" + 週區間;
+      var sheet = ss.getSheetByName(表名);
+      var 是否未填 = false;
+
+      if (!sheet) {
+        是否未填 = true;
+      } else {
+        // 檢查 B7 儲存格（第一個工作項目）是否為空
+        var 第一個項目 = sheet.getRange("B7").getValue();
+        if (!第一個項目 || String(第一個項目).trim() === "") {
+          是否未填 = true;
+        }
+      }
+
+      if (是否未填) {
+        未填寫部門.push(部門名);
+        
+        // 寄送 Email (實際執行時請確保已取得權限)
+        var 收件人 = 部門Email[部門名];
+        var 主旨 = "【提醒】您的本週週報 (" + 週區間 + ") 尚未填寫完成";
+        var 內容 = "您好，\n\n系統檢測到 " + 部門名 + " 的本週週報尚未填寫完成。\n" +
+                   "請撥冗於今日下午 5 點前完成填報，以利彙整作業。\n\n" +
+                   "試算表連結：" + 試算表URL + "\n\n(此為系統自動發送郵件，請勿直接回覆)";
+        
+        MailApp.sendEmail(收件人, 主旨, 內容);
+        Logger.log("已發送提醒給：" + 部門名 + " (" + 收件人 + ")");
+      }
+    });
+
+    if (未填寫部門.length > 0) {
+      SpreadsheetApp.getUi().alert("✅ 提醒發送完成！\n已通知部門：" + 未填寫部門.join("、"));
+    } else {
+      SpreadsheetApp.getUi().alert("🎉 太棒了！所有部門都已完成填報。");
+    }
+
+  } catch (錯誤) {
+    Logger.log("❌ 發送提醒錯誤：" + 錯誤.message);
+    SpreadsheetApp.getUi().alert("❌ 發送提醒發生錯誤：" + 錯誤.message);
+  }
+}
+
+/**
+ * 設定每週五中午 12 點自動發送提醒觸發器
+ */
+function 設定提醒觸發器() {
+  ScriptApp.getProjectTriggers().forEach(function(t) {
+    if (t.getHandlerFunction() === "發送填報提醒") ScriptApp.deleteTrigger(t);
+  });
+
+  ScriptApp.newTrigger("發送填報提醒")
+    .timeBased()
+    .onWeekDay(ScriptApp.WeekDay.FRIDAY)
+    .atHour(12)
+    .create();
+
+  SpreadsheetApp.getUi().alert("✅ 每週五 12:00 自動提醒已設定！");
 }
 
 
