@@ -175,7 +175,7 @@ function 設定定期更新觸發器() {
 
 /**
  * 定時更新專案狀態
- * 說明：自動計算專案進度、逾期檢查，並生成摘要
+ * 說明：自動計算專案進度、逾期檢查，並生成摘要、標記顏色及自動通知（包含加班預警）
  */
 function 定時更新專案狀態() {
   try {
@@ -186,31 +186,106 @@ function 定時更新專案狀態() {
     var 資料 = 專案表.getDataRange().getValues();
     var 今天 = new Date();
     var 更新結果 = [];
+    var 背景顏色 = [];
+    var 逾期專案 = [];
+    var 員工任務數 = {};
 
     for (var i = 1; i < 資料.length; i++) {
+      var 專案名稱 = 資料[i][0];
+      var 負責人 = 資料[i][1];
       var 截止日 = new Date(資料[i][4]); // E 欄：截止日期
       var 進度 = 資料[i][5];             // F 欄：完成進度
       var 狀態;
+      var 顏色 = "#ffffff"; // 預設白色
+
+      // 累計員工進行中的任務數 (進度小於 100 且有負責人)
+      if (負責人 && 負責人.toString().trim() !== "" && 進度 < 100) {
+        員工任務數[負責人] = (員工任務數[負責人] || 0) + 1;
+      }
 
       if (進度 >= 100) {
         狀態 = "✅ 已完成";
+        顏色 = "#e8f5e9"; // 淺綠色
       } else if (今天 > 截止日) {
         狀態 = "🔴 已逾期";
+        顏色 = "#ffebee"; // 淺紅色
+        逾期專案.push("專案：" + 專案名稱 + " (負責人：" + 負責人 + ")");
       } else {
         var 剩餘天數 = Math.ceil((截止日 - 今天) / (1000 * 60 * 60 * 24));
         if (剩餘天數 <= 3) {
           狀態 = "🟡 即將到期 (" + 剩餘天數 + "天)";
+          顏色 = "#fff3e0"; // 淺橘色
         } else {
           狀態 = "🟢 進行中 (" + 剩餘天數 + "天)";
         }
       }
 
       更新結果.push([狀態]);
+      
+      // 準備整列的背景顏色陣列 (A到G共7欄)
+      var 列顏色 = [];
+      for(var c = 0; c < 7; c++) 列顏色.push(顏色);
+      背景顏色.push(列顏色);
     }
 
-    // 批次寫入狀態
+    // 批次寫入狀態與顏色
     if (更新結果.length > 0) {
       專案表.getRange(2, 7, 更新結果.length, 1).setValues(更新結果);
+      專案表.getRange(2, 1, 背景顏色.length, 7).setBackgrounds(背景顏色);
+    }
+
+    // 檢查員工負擔 (假設超過 4 件進行中專案為過重)
+    var 超載員工 = [];
+    var 負擔上限 = 4;
+    for (var 員工 in 員工任務數) {
+      if (員工任務數[員工] > 負擔上限) {
+        超載員工.push(員工 + " (進行中：" + 員工任務數[員工] + " 件)");
+      }
+    }
+
+    // 整合發送通知信 (逾期或超載)
+    var 使用者信箱 = Session.getActiveUser().getEmail();
+    if (使用者信箱 && (逾期專案.length > 0 || 超載員工.length > 0)) {
+      var 信件標題 = "⚠️ 專案管理系統預警通知";
+      var 信件內容 = "您好，\n\n系統偵測到以下需要注意的事項：\n\n";
+      
+      if (逾期專案.length > 0) {
+        信件內容 += "【逾期專案】\n" + 逾期專案.join("\n") + "\n\n";
+      }
+      
+      if (超載員工.length > 0) {
+        信件內容 += "【員工負擔過重預警】\n" + 超載員工.join("\n") + "\n請考慮重新分配任務以防加班。\n\n";
+      }
+      
+      信件內容 += "請前往試算表查看詳細狀況。\n\n系統自動發送";
+      
+      MailApp.sendEmail(使用者信箱, 信件標題, 信件內容);
+      Logger.log("📧 已發送預警通知信給：" + 使用者信箱);
+    }
+
+    // 新增：每日一次的指定信箱逾期提醒
+    if (逾期專案.length > 0) {
+      var properties = PropertiesService.getScriptProperties();
+      var todayStr = Utilities.formatDate(今天, "Asia/Taipei", "yyyy-MM-dd");
+      var lastSentDate = properties.getProperty("LAST_OVERDUE_EMAIL_DATE");
+      
+      if (lastSentDate !== todayStr) {
+        var 指定信箱 = "sweewcindy@gmail.com";
+        var 信件標題 = "📌 每日逾期任務提醒";
+        var 提醒內容 = "您好，\n\n系統偵測到目前仍有逾期未處理的任務。請協助提醒以下員工：\n\n";
+        
+        for(var u = 0; u < 逾期專案.length; u++) {
+          提醒內容 += "- " + 逾期專案[u] + "\n";
+        }
+        
+        提醒內容 += "\n請登入試算表確認進度。\n\n系統自動發送";
+        
+        MailApp.sendEmail(指定信箱, 信件標題, 提醒內容);
+        Logger.log("📧 已發送每日逾期提醒信至：" + 指定信箱);
+        
+        // 紀錄今天已發送
+        properties.setProperty("LAST_OVERDUE_EMAIL_DATE", todayStr);
+      }
     }
 
     // 更新時間戳記
@@ -221,6 +296,38 @@ function 定時更新專案狀態() {
 
   } catch (錯誤) {
     Logger.log("❌ 定時更新錯誤：" + 錯誤.message);
+  }
+}
+
+/**
+ * 彈窗提醒逾期任務
+ * 說明：掃描專案狀態，如果有逾期任務，彈出對話框提醒使用者
+ */
+function 彈窗提醒逾期任務() {
+  try {
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var 專案表 = ss.getSheetByName("專案追蹤");
+    if (!專案表) return;
+
+    var 資料 = 專案表.getDataRange().getValues();
+    var 逾期專案 = [];
+
+    for (var i = 1; i < 資料.length; i++) {
+      var 狀態 = String(資料[i][6]); // G 欄
+      if (狀態.indexOf("已逾期") >= 0) {
+        逾期專案.push("- " + 資料[i][0] + " (負責人：" + 資料[i][1] + ")");
+      }
+    }
+
+    if (逾期專案.length > 0) {
+      var 訊息 = "⚠️ 注意！發現以下逾期任務：\n\n" + 逾期專案.join("\n") + "\n\n請盡速處理！";
+      SpreadsheetApp.getUi().alert("逾期任務提醒", 訊息, SpreadsheetApp.getUi().ButtonSet.OK);
+    } else {
+      SpreadsheetApp.getUi().alert("通知", "🎉 目前沒有逾期任務，太棒了！", SpreadsheetApp.getUi().ButtonSet.OK);
+    }
+
+  } catch (錯誤) {
+    Logger.log("❌ 錯誤：" + 錯誤.message);
   }
 }
 
@@ -327,30 +434,400 @@ function 生成專案摘要() {
     定時更新專案狀態();
 
     var 資料 = 專案表.getDataRange().getValues();
-
-    // 統計各狀態數量
-    var 統計 = { 已完成: 0, 已逾期: 0, 即將到期: 0, 進行中: 0 };
+    var 標題 = 資料[0];
+    var 專案列表 = [];
+    
+    // 1. 將資料結構化
     for (var i = 1; i < 資料.length; i++) {
-      var 狀態 = String(資料[i][6]); // G 欄
-      if (狀態.indexOf("已完成") >= 0) 統計.已完成++;
-      else if (狀態.indexOf("已逾期") >= 0) 統計.已逾期++;
-      else if (狀態.indexOf("即將到期") >= 0) 統計.即將到期++;
-      else 統計.進行中++;
+      var 專案 = {};
+      for (var j = 0; j < 標題.length; j++) {
+        專案[標題[j]] = 資料[i][j];
+      }
+      專案列表.push(專案);
     }
 
-    var 總專案 = 資料.length - 1;
-    var 摘要 = "📊 專案進度摘要\n\n" +
-      "總專案數：" + 總專案 + "\n" +
-      "✅ 已完成：" + 統計.已完成 + "\n" +
-      "🟢 進行中：" + 統計.進行中 + "\n" +
-      "🟡 即將到期：" + 統計.即將到期 + "\n" +
-      "🔴 已逾期：" + 統計.已逾期;
+    // 2. 依優先級分組
+    var 優先級分組 = 依欄位分組(專案列表, "優先級");
+
+    // 3. 建立摘要字串
+    var 摘要 = "📊 專案優先級摘要\n\n";
+    摘要 += "總專案數：" + 專案列表.length + "\n\n";
+
+    var 順序 = ["高", "中", "低"];
+    for (var k = 0; k < 順序.length; k++) {
+      var 級別 = 順序[k];
+      var 該級別專案 = 優先級分組[級別] || [];
+      摘要 += "🔥 優先級 [" + 級別 + "]：" + 該級別專案.length + " 件\n";
+      for (var m = 0; m < 該級別專案.length; m++) {
+        摘要 += "  - " + 該級別專案[m]["專案名稱"] + " (" + 該級別專案[m]["狀態"] + ")\n";
+      }
+      摘要 += "\n";
+    }
 
     SpreadsheetApp.getUi().alert(摘要);
     Logger.log(摘要);
 
   } catch (錯誤) {
     Logger.log("❌ 錯誤：" + 錯誤.message);
+  }
+}
+
+/**
+ * 生成部門薪資報表
+ * 說明：自動計算每個部門的平均薪資與人數，並產出至「薪資報表」工作表
+ */
+function 生成薪資報表() {
+  try {
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var 人員表 = ss.getSheetByName("專案人員");
+    if (!人員表) {
+      SpreadsheetApp.getUi().alert("❌ 請先執行「初始化專案資料」");
+      return;
+    }
+
+    // 1. 讀取並結構化資料
+    var 資料 = 人員表.getDataRange().getValues();
+    var 標題 = 資料[0];
+    var 員工列表 = [];
+    for (var i = 1; i < 資料.length; i++) {
+      var 員工 = {};
+      for (var j = 0; j < 標題.length; j++) {
+        員工[標題[j]] = 資料[i][j];
+      }
+      員工列表.push(員工);
+    }
+
+    // 2. 依部門分組
+    var 部門分組 = 依欄位分組(員工列表, "部門");
+
+    // 3. 計算各部門平均薪資與人數
+    var 報表資料 = [];
+    for (var 部門名 in 部門分組) {
+      var 成員 = 部門分組[部門名];
+      var 人數 = 成員.length;
+      var 總薪資 = 0;
+      for (var k = 0; k < 人數; k++) {
+        總薪資 += Number(成員[k]["月薪"]) || 0;
+      }
+      var 平均薪資 = Math.round(總薪資 / 人數);
+      報表資料.push([部門名, 人數, 平均薪資, 總薪資]);
+    }
+
+    // 4. 建立或清除「薪資報表」工作表
+    var 報表表 = ss.getSheetByName("薪資報表");
+    if (報表表) {
+      報表表.clear();
+    } else {
+      報表表 = ss.insertSheet("薪資報表");
+    }
+
+    // 5. 寫入標題
+    報表表.getRange("A1").setValue("💰 部門薪資報表");
+    報表表.getRange("A1").setFontSize(16).setFontWeight("bold");
+    報表表.getRange("A2").setValue("更新時間：" + Utilities.formatDate(new Date(), "Asia/Taipei", "yyyy/MM/dd HH:mm"));
+
+    var 標題列 = [["部門", "人數", "平均月薪", "總月薪"]];
+    報表表.getRange(4, 1, 1, 4).setValues(標題列)
+      .setFontWeight("bold")
+      .setBackground("#e8f5e9");
+
+    // 6. 寫入資料
+    if (報表資料.length > 0) {
+      報表表.getRange(5, 1, 報表資料.length, 4).setValues(報表資料);
+      // 設定數字格式
+      報表表.getRange(5, 3, 報表資料.length, 2).setNumberFormat("#,##0");
+    }
+
+    // 7. 調整欄寬
+    for (var c = 1; c <= 4; c++) {
+      報表表.autoResizeColumn(c);
+    }
+
+    Logger.log("✅ 薪資報表已生成！");
+    SpreadsheetApp.getUi().alert("✅ 薪資報表已生成！請查看「薪資報表」工作表。");
+
+  } catch (錯誤) {
+    Logger.log("❌ 錯誤：" + 錯誤.message);
+  }
+}
+
+/**
+ * 建立任務看板
+ * 說明：將專案資料結構化並依狀態分組，產生 Kanban 看板視圖
+ */
+function 生成任務看板() {
+  try {
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var 專案表 = ss.getSheetByName("專案追蹤");
+    if (!專案表) {
+      SpreadsheetApp.getUi().alert("❌ 找不到「專案追蹤」工作表");
+      return;
+    }
+
+    // 先更新狀態確保資料最新
+    定時更新專案狀態();
+
+    // 1. 讀取並結構化資料
+    var 資料 = 專案表.getDataRange().getValues();
+    var 標題 = 資料[0];
+    var 專案列表 = [];
+    for (var i = 1; i < 資料.length; i++) {
+      var 專案 = {};
+      for (var j = 0; j < 標題.length; j++) {
+        專案[標題[j]] = 資料[i][j];
+      }
+      專案列表.push(專案);
+    }
+
+    // 2. 依狀態基礎分類分組
+    var 看板分類 = {
+      "進行中": [],
+      "即將到期": [],
+      "已逾期": [],
+      "已完成": []
+    };
+
+    for (var k = 0; k < 專案列表.length; k++) {
+      var 專案 = 專案列表[k];
+      var 狀態 = String(專案["狀態"] || "");
+      var 顯示文字 = 專案["專案名稱"] + "\n(" + 專案["負責人"] + ")";
+
+      if (狀態.indexOf("已完成") >= 0) {
+        看板分類["已完成"].push(顯示文字);
+      } else if (狀態.indexOf("已逾期") >= 0) {
+        看板分類["已逾期"].push(顯示文字);
+      } else if (狀態.indexOf("即將到期") >= 0) {
+        看板分類["即將到期"].push(顯示文字);
+      } else {
+        看板分類["進行中"].push(顯示文字);
+      }
+    }
+
+    // 3. 建立或清除「任務看板」工作表
+    var 看板表 = ss.getSheetByName("任務看板");
+    if (看板表) {
+      看板表.clear();
+    } else {
+      看板表 = ss.insertSheet("任務看板");
+    }
+
+    // 4. 設定標題區塊
+    看板表.getRange("A1").setValue("📋 專案任務看板");
+    看板表.getRange("A1").setFontSize(16).setFontWeight("bold");
+    看板表.getRange("A2").setValue("更新時間：" + Utilities.formatDate(new Date(), "Asia/Taipei", "yyyy/MM/dd HH:mm"));
+
+    // 5. 設定 Kanban 欄位標題
+    var 欄位順序 = ["進行中", "即將到期", "已逾期", "已完成"];
+    var 欄位標題 = [["🟢 進行中", "🟡 即將到期", "🔴 已逾期", "✅ 已完成"]];
+    看板表.getRange(4, 1, 1, 4).setValues(欄位標題)
+      .setFontWeight("bold")
+      .setHorizontalAlignment("center")
+      .setFontSize(12)
+      .setBackground("#eceff1");
+
+    // 6. 找出最多任務的欄位，決定需要寫入幾列
+    var 最大列數 = 0;
+    for (var c = 0; c < 欄位順序.length; c++) {
+      if (看板分類[欄位順序[c]].length > 最大列數) {
+        最大列數 = 看板分類[欄位順序[c]].length;
+      }
+    }
+
+    // 7. 填入看板資料
+    if (最大列數 > 0) {
+      var 輸出資料 = [];
+      var 輸出背景 = [];
+      // 定義各欄位的背景顏色
+      var 背景對應 = ["#ffffff", "#fff3e0", "#ffebee", "#e8f5e9"];
+
+      for (var r = 0; r < 最大列數; r++) {
+        var 這一列 = [];
+        var 這一列顏色 = [];
+        for (var c = 0; c < 欄位順序.length; c++) {
+          var 類別 = 欄位順序[c];
+          var 內容 = 看板分類[類別][r] || "";
+          這一列.push(內容);
+          
+          if (內容 !== "") {
+            這一列顏色.push(背景對應[c]);
+          } else {
+            這一列顏色.push("#ffffff");
+          }
+        }
+        輸出資料.push(這一列);
+        輸出背景.push(這一列顏色);
+      }
+
+      var 範圍 = 看板表.getRange(5, 1, 最大列數, 4);
+      範圍.setValues(輸出資料);
+      範圍.setBackgrounds(輸出背景);
+      範圍.setVerticalAlignment("middle");
+      範圍.setHorizontalAlignment("center");
+      範圍.setWrap(true);
+      
+      // 稍微加高列高以顯示換行內容
+      for (var rr = 5; rr < 5 + 最大列數; rr++) {
+        看板表.setRowHeight(rr, 45);
+      }
+    }
+
+    // 8. 調整欄寬
+    for (var col = 1; col <= 4; col++) {
+      看板表.setColumnWidth(col, 180);
+    }
+
+    Logger.log("✅ 任務看板已生成！");
+    SpreadsheetApp.getUi().alert("✅ 任務看板已生成！請查看「任務看板」工作表。");
+
+  } catch (錯誤) {
+    Logger.log("❌ 錯誤：" + 錯誤.message);
+  }
+}
+
+/**
+ * 智慧派工
+ * 說明：自動依員工負擔與技能匹配分配未指派的任務，最少負擔與技能相符者優先。
+ */
+function 智慧派工() {
+  try {
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var 人員表 = ss.getSheetByName("專案人員");
+    var 專案表 = ss.getSheetByName("專案追蹤");
+    
+    if (!人員表 || !專案表) {
+      SpreadsheetApp.getUi().alert("❌ 找不到「專案人員」或「專案追蹤」工作表");
+      return;
+    }
+
+    // 1. 讀取員工清單與職稱（作為技能依據）
+    var 人員資料 = 人員表.getDataRange().getValues();
+    var 員工名單 = [];
+    var 員工職稱 = {};
+    for (var i = 1; i < 人員資料.length; i++) {
+      var 姓名 = 人員資料[i][0];
+      員工名單.push(姓名); // A 欄：姓名
+      員工職稱[姓名] = 人員資料[i][2]; // C 欄：職稱
+    }
+
+    if (員工名單.length === 0) {
+      SpreadsheetApp.getUi().alert("❌ 沒有可用的員工資料");
+      return;
+    }
+
+    // 2. 讀取專案資料並計算負擔
+    var 專案資料 = 專案表.getDataRange().getValues();
+    var 標題 = 專案資料[0];
+    
+    // 初始化負擔統計
+    var 員工負擔 = {};
+    員工名單.forEach(function(姓名) {
+      員工負擔[姓名] = 0;
+    });
+
+    // 找出「負責人」、「進度(%)」與「專案名稱」的欄位索引
+    var 負責人索引 = 標題.indexOf("負責人");
+    var 進度索引 = 標題.indexOf("進度(%)");
+    var 專案名稱索引 = 標題.indexOf("專案名稱");
+
+    if (負責人索引 === -1 || 進度索引 === -1 || 專案名稱索引 === -1) {
+      SpreadsheetApp.getUi().alert("❌ 工作表欄位格式不符");
+      return;
+    }
+
+    // 計算每個人進行中的專案數
+    for (var j = 1; j < 專案資料.length; j++) {
+      var 負責人 = 專案資料[j][負責人索引];
+      var 進度 = 專案資料[j][進度索引];
+      
+      // 如果有負責人且專案未完成，負擔 + 1
+      if (負責人 && 進度 < 100 && 員工負擔.hasOwnProperty(負責人)) {
+        員工負擔[負責人]++;
+      }
+    }
+
+    // 定義技能匹配規則：職稱 -> 專案名稱關鍵字
+    var 資格規則 = {
+      "前端工程師": ["官網", "網頁", "介面"],
+      "後端工程師": ["API", "資料庫", "系統"],
+      "UI設計師": ["設計", "介面", "視覺"],
+      "全端工程師": ["系統", "API", "完整", "改版"],
+      "專案經理": ["管理", "協調", "規劃"],
+      "UX研究員": ["用戶", "研究", "訪談"],
+      "QA工程師": ["測試", "品質", "驗證"],
+      "產品經理": ["產品", "規劃", "客戶"],
+      "自動化測試": ["自動化", "測試"],
+      "iOS工程師": ["App", "iOS", "手機"]
+    };
+
+    // 3. 尋找未指派的專案並進行派工
+    var 有更新 = false;
+    var 派工紀錄 = [];
+
+    for (var k = 1; k < 專案資料.length; k++) {
+      var 當前負責人 = 專案資料[k][負責人索引];
+      var 專案名稱 = 專案資料[k][專案名稱索引];
+
+      // 如果沒有負責人，進行智慧派工
+      if (!當前負責人 || 當前負責人.toString().trim() === "") {
+        
+        // 3.1 找出符合技能的員工
+        var 符合條件的員工 = [];
+        for (var 員工 in 員工負擔) {
+          var 職稱 = 員工職稱[員工];
+          var 關鍵字 = 資格規則[職稱] || [];
+          var 符合技能 = false;
+          
+          for (var r = 0; r < 關鍵字.length; r++) {
+            if (專案名稱.indexOf(關鍵字[r]) >= 0) {
+              符合技能 = true;
+              break;
+            }
+          }
+          
+          if (符合技能) {
+            符合條件的員工.push(員工);
+          }
+        }
+
+        // 3.2 決定候選名單：優先用符合技能的，若無則用所有人（備援）
+        var 候選名單 = 符合條件的員工.length > 0 ? 符合條件的員工 : Object.keys(員工負擔);
+        
+        // 3.3 從候選人中選出負擔最少的人
+        var 最少負擔者 = null;
+        var 最少負擔量 = Infinity;
+
+        for (var m = 0; m < 候選名單.length; m++) {
+          var 候選人 = 候選名單[m];
+          if (員工負擔[候選人] < 最少負擔量) {
+            最少負擔量 = 員工負擔[候選人];
+            最少負擔者 = 候選人;
+          }
+        }
+
+        if (最少負擔者) {
+          // 填入負責人
+          專案表.getRange(k + 1, 負責人索引 + 1).setValue(最少負擔者);
+          // 更新負擔
+          員工負擔[最少負擔者]++;
+          有更新 = true;
+          
+          var 匹配類型 = 符合條件的員工.length > 0 ? " (技能匹配)" : " (負擔優先)";
+          派工紀錄.push("「" + 專案名稱 + "」 ➡️ " + 最少負擔者 + 匹配類型);
+        }
+      }
+    }
+
+    if (有更新) {
+      // 更新狀態以防新指派的專案狀態未計算
+      定時更新專案狀態();
+      SpreadsheetApp.getUi().alert("✅ 智慧派工完成！\n\n派工結果：\n" + 派工紀錄.join("\n"));
+    } else {
+      SpreadsheetApp.getUi().alert("ℹ️ 目前沒有未指派的專案。");
+    }
+
+  } catch (錯誤) {
+    Logger.log("❌ 錯誤：" + 錯誤.message);
+    SpreadsheetApp.getUi().alert("❌ 發生錯誤：" + 錯誤.message);
   }
 }
 
@@ -423,6 +900,10 @@ function onOpen() {
     .addItem("📋 生成部門清單", "生成部門清單")
     .addItem("📊 更新專案狀態", "定時更新專案狀態")
     .addItem("📈 專案進度摘要", "生成專案摘要")
+    .addItem("💰 生成薪資報表", "生成薪資報表")
+    .addItem("📌 建立任務看板", "生成任務看板")
+    .addItem("🤖 智慧派工", "智慧派工")
+    .addItem("⏰ 檢查逾期任務", "彈窗提醒逾期任務")
     .addSeparator()
     .addItem("🔬 函數進階示範", "函數進階示範")
     .addItem("🗂️ 資料結構化示範", "資料結構化示範")

@@ -43,8 +43,9 @@ function 供應商評比() {
       var 退貨率 = (s.退貨次數 / s.訂單數 * 100);
       var 平均品質 = s.品質分數.reduce(function(a, b) { return a + b; }, 0) / s.品質分數.length;
 
-      // 綜合評分 = 品質(40%) + 準時率(30%) + (100-退貨率)(20%) + 價格競爭力(10%)
-      var 綜合 = 平均品質 * 0.4 + 準時率 * 0.3 + (100 - 退貨率) * 0.2 + 50 * 0.1;
+      // 綜合評分 = 價格(40%) + 準時率(30%) + (100-退貨率)(20%) + 品質(10%)
+      var 價格分數 = 50; // 預設為 50 分（因為範例資料單價相同）
+      var 綜合 = 價格分數 * 0.4 + 準時率 * 0.3 + (100 - 退貨率) * 0.2 + 平均品質 * 0.1;
 
       排名.push({
         供應商: name, 訂單數: s.訂單數, 總金額: s.總金額,
@@ -126,7 +127,9 @@ function 初始化採購資料() {
   for (var i = 0; i < 40; i++) {
     var s = 供應商[Math.floor(Math.random() * 供應商.length)];
     var p = 品項[Math.floor(Math.random() * 品項.length)];
-    var 單價 = [150, 1200, 15, 25, 45][品項.indexOf(p)];
+    var 基準單價 = [150, 1200, 15, 25, 45][品項.indexOf(p)];
+    // 加入隨機波動 (±15%) 模擬價格走勢
+    var 單價 = Math.round(基準單價 * (1 + (Math.random() - 0.5) * 0.3));
     var 數量 = Math.floor(Math.random() * 50) + 5;
     var 交貨 = Math.random() > 0.2 ? "準時" : "延遲";
     var 退貨 = Math.random() > 0.85 ? "是" : "否";
@@ -147,11 +150,139 @@ function 初始化採購資料() {
   SpreadsheetApp.getUi().alert("✅ 40 筆採購紀錄已建立！");
 }
 
+/**
+ * 篩選與排序分析
+ * 說明：篩選出交貨延遲且金額大於 5000 的採購紀錄，並依金額由高到低排序。
+ */
+function 篩選與排序分析() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName("採購紀錄");
+  if (!sheet) {
+    SpreadsheetApp.getUi().alert("❌ 請先執行「初始化採購資料」");
+    return;
+  }
+
+  var 資料 = sheet.getDataRange().getValues();
+  var 標題 = 資料[0];
+
+  // 轉成物件陣列
+  var 紀錄 = [];
+  for (var i = 1; i < 資料.length; i++) {
+    var obj = {};
+    for (var j = 0; j < 標題.length; j++) {
+      obj[標題[j]] = 資料[i][j];
+    }
+    紀錄.push(obj);
+  }
+
+  // 使用 filter 篩選：交貨狀態為 "延遲" 且 金額 > 5000
+  var 問題採購 = 紀錄.filter(function(r) {
+    return r["交貨狀態"] === "延遲" && r["金額"] > 5000;
+  });
+
+  // 使用 sort 排序：依金額降冪
+  問題採購.sort(function(a, b) {
+    return b["金額"] - a["金額"];
+  });
+
+  // 顯示結果
+  if (問題採購.length > 0) {
+    var 訊息 = "⚠️ 延遲且大額（>5000）的採購案共 " + 問題採購.length + " 筆：\n\n";
+    問題採購.forEach(function(r, idx) {
+      訊息 += (idx + 1) + ". " + r["供應商"] + " - " + r["品項"] + " ($" + r["金額"].toLocaleString() + ")\n";
+    });
+    SpreadsheetApp.getUi().alert(訊息);
+  } else {
+    SpreadsheetApp.getUi().alert("ℹ️ 沒有符合條件（延遲且大額）的採購紀錄。");
+  }
+}
+
+/**
+ * 價格趨勢分析
+ * 說明：分析同品項在不同月份的平均單價走勢
+ */
+function 價格趨勢分析() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName("採購紀錄");
+  if (!sheet) {
+    SpreadsheetApp.getUi().alert("❌ 請先執行「初始化採購資料」");
+    return;
+  }
+
+  var 資料 = sheet.getDataRange().getValues();
+  var 標題 = 資料[0];
+
+  // 轉成物件陣列
+  var 紀錄 = [];
+  for (var i = 1; i < 資料.length; i++) {
+    var obj = {};
+    for (var j = 0; j < 標題.length; j++) {
+      obj[標題[j]] = 資料[i][j];
+    }
+    紀錄.push(obj);
+  }
+
+  // 統計 品項 + 月份 的平均單價
+  var 趨勢資料 = {};
+  
+  紀錄.forEach(function(r) {
+    var 品項 = r["品項"];
+    var 日期值 = r["日期"];
+    if (!日期值) return;
+    
+    var 月份 = (new Date(日期值).getMonth() + 1) + "月";
+    var 單價 = Number(r["單價"]) || 0;
+    
+    if (!趨勢資料[品項]) 趨勢資料[品項] = {};
+    if (!趨勢資料[品項][月份]) 趨勢資料[品項][月份] = { 總價: 0, 次數: 0 };
+    
+    趨勢資料[品項][月份].總價 += 單價;
+    趨勢資料[品項][月份].次數++;
+  });
+
+  // 建立或清除「價格趨勢分析」工作表
+  var 報表表 = ss.getSheetByName("價格趨勢分析");
+  if (報表表) 報表表.clear(); else 報表表 = ss.insertSheet("價格趨勢分析");
+
+  報表表.getRange("A1").setValue("📊 品項價格趨勢分析（按月份平均單價）").setFontSize(16).setFontWeight("bold");
+  
+  var 月份清單 = ["1月", "2月", "3月", "4月"];
+  var 表頭 = ["品項"].concat(月份清單);
+  
+  報表表.getRange(3, 1, 1, 表頭.length).setValues([表頭]);
+  報表表.getRange(3, 1, 1, 表頭.length).setBackground("#00796b").setFontColor("#fff").setFontWeight("bold");
+
+  var 寫入資料 = [];
+  for (var 品項名 in 趨勢資料) {
+    var 列 = [品項名];
+    月份清單.forEach(function(月) {
+      if (趨勢資料[品項名][月]) {
+        var 平均 = 趨勢資料[品項名][月].總價 / 趨勢資料[品項名][月].次數;
+        列.push(Math.round(平均));
+      } else {
+        列.push("");
+      }
+    });
+    寫入資料.push(列);
+  }
+
+  if (寫入資料.length > 0) {
+    報表表.getRange(4, 1, 寫入資料.length, 表頭.length).setValues(寫入資料);
+    報表表.getRange(4, 2, 寫入資料.length, 月份清單.length).setNumberFormat("#,##0");
+  }
+
+  for (var c = 1; c <= 表頭.length; c++) 報表表.autoResizeColumn(c);
+
+  SpreadsheetApp.getUi().alert("✅ 價格趨勢分析報表已生成！請查看「價格趨勢分析」工作表。");
+}
+
 function onOpen() {
   SpreadsheetApp.getUi()
     .createMenu("🤖 智慧採購管理")
     .addItem("📦 初始化採購資料", "初始化採購資料")
     .addItem("🏆 供應商評比", "供應商評比")
     .addItem("📊 採購預測", "採購預測")
+    .addItem("🔍 篩選大額延遲件", "篩選與排序分析")
+    .addItem("📈 價格趨勢分析", "價格趨勢分析")
     .addToUi();
 }

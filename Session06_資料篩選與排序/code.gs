@@ -364,6 +364,273 @@ function 初始化銷售資料() {
   SpreadsheetApp.getUi().alert("✅ 已建立 30 筆銷售紀錄！");
 }
 
+/**
+ * 找出消費金額最高的前 10 名客戶
+ */
+function 找出前10名客戶() {
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("銷售紀錄");
+  if (!sheet) {
+    SpreadsheetApp.getUi().alert("❌ 請先執行「初始化銷售資料」");
+    return;
+  }
+
+  var 資料 = sheet.getDataRange().getValues();
+  var 標題 = 資料[0];
+
+  // 轉成物件陣列
+  var 銷售 = [];
+  for (var i = 1; i < 資料.length; i++) {
+    var obj = {};
+    for (var j = 0; j < 標題.length; j++) {
+      obj[標題[j]] = 資料[i][j];
+    }
+    銷售.push(obj);
+  }
+
+  // 累計每位客戶的消費總額
+  var 客戶消費 = {};
+  for (var k = 0; k < 銷售.length; k++) {
+    var 客戶 = 銷售[k]["客戶"];
+    var 金額 = Number(銷售[k]["金額"]) || 0;
+    
+    if (!客戶消費[客戶]) {
+      客戶消費[客戶] = 0;
+    }
+    客戶消費[客戶] += 金額;
+  }
+
+  // 轉為陣列以便排序
+  var 客戶排序陣列 = [];
+  for (var name in 客戶消費) {
+    客戶排序陣列.push({
+      "客戶": name,
+      "總金額": 客戶消費[name]
+    });
+  }
+
+  // 依總金額降冪排序
+  客戶排序陣列.sort(function(a, b) {
+    return b["總金額"] - a["總金額"];
+  });
+
+  // 取得前 10 名
+  var 前10名 = 客戶排序陣列.slice(0, 10);
+
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  
+  // 建立或清除「前10名客戶」工作表
+  var 報表表 = ss.getSheetByName("前10名客戶");
+  if (報表表) {
+    報表表.clear();
+  } else {
+    報表表 = ss.insertSheet("前10名客戶");
+  }
+
+  // 寫入標題
+  報表表.getRange("A1").setValue("🏆 消費金額前 10 名客戶");
+  報表表.getRange("A1").setFontSize(16).setFontWeight("bold");
+  報表表.getRange("A2").setValue("更新時間：" + Utilities.formatDate(new Date(), "Asia/Taipei", "yyyy/MM/dd HH:mm"));
+
+  var 標題列 = [["名次", "客戶名稱", "消費總金額"]];
+  報表表.getRange(4, 1, 1, 3).setValues(標題列)
+    .setFontWeight("bold")
+    .setBackground("#e1bee7"); // 淺紫色
+
+  // 準備資料
+  var 報表資料 = [];
+  for (var m = 0; m < 前10名.length; m++) {
+    報表資料.push([m + 1, 前10名[m]["客戶"], 前10名[m]["總金額"]]);
+  }
+
+  // 寫入資料
+  if (報表資料.length > 0) {
+    報表表.getRange(5, 1, 報表資料.length, 3).setValues(報表資料);
+    報表表.getRange(5, 3, 報表資料.length, 1).setNumberFormat("#,##0");
+  }
+
+  // 調整欄寬
+  for (var c = 1; c <= 3; c++) {
+    報表表.autoResizeColumn(c);
+  }
+
+  SpreadsheetApp.getUi().alert("✅ 前 10 名客戶報表已生成！請查看「前10名客戶」工作表。");
+}
+
+/**
+ * 生成每月銷售額對照表
+ */
+function 生成每月銷售報表() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName("銷售紀錄");
+  if (!sheet) {
+    SpreadsheetApp.getUi().alert("❌ 請先執行「初始化銷售資料」");
+    return;
+  }
+
+  var 資料 = sheet.getDataRange().getValues();
+  var 標題 = 資料[0];
+
+  // 轉成物件陣列
+  var 銷售 = [];
+  for (var i = 1; i < 資料.length; i++) {
+    var obj = {};
+    for (var j = 0; j < 標題.length; j++) {
+      obj[標題[j]] = 資料[i][j];
+    }
+    銷售.push(obj);
+  }
+
+  // 依月份累計金額
+  var 每月銷售 = {};
+  for (var k = 0; k < 銷售.length; k++) {
+    var 日期值 = 銷售[k]["日期"];
+    if (!日期值) continue;
+    
+    var 實際日期 = new Date(日期值);
+    var 月份 = (實際日期.getMonth() + 1) + "月"; 
+    var 金額 = Number(銷售[k]["金額"]) || 0;
+    
+    if (!每月銷售[月份]) {
+      每月銷售[月份] = 0;
+    }
+    每月銷售[月份] += 金額;
+  }
+
+  // 轉為陣列以便排序
+  var 報表資料 = [];
+  for (var 月 in 每月銷售) {
+    報表資料.push([月, 每月銷售[月]]);
+  }
+
+  // 依月份排序
+  報表資料.sort(function(a, b) {
+    var numA = parseInt(a[0]);
+    var numB = parseInt(b[0]);
+    return numA - numB;
+  });
+
+  // 建立或清除「每月銷售報表」工作表
+  var 報表表 = ss.getSheetByName("每月銷售報表");
+  if (報表表) {
+    報表表.clear();
+  } else {
+    報表表 = ss.insertSheet("每月銷售報表");
+  }
+
+  // 寫入標題
+  報表表.getRange("A1").setValue("📊 每月銷售額對照表");
+  報表表.getRange("A1").setFontSize(16).setFontWeight("bold");
+  報表表.getRange("A2").setValue("更新時間：" + Utilities.formatDate(new Date(), "Asia/Taipei", "yyyy/MM/dd HH:mm"));
+
+  var 標題列 = [["月份", "銷售總額"]];
+  報表表.getRange(4, 1, 1, 2).setValues(標題列)
+    .setFontWeight("bold")
+    .setBackground("#bbdefb"); // 淺藍色
+
+  // 寫入資料
+  if (報表資料.length > 0) {
+    報表表.getRange(5, 1, 報表資料.length, 2).setValues(報表資料);
+    報表表.getRange(5, 2, 報表資料.length, 1).setNumberFormat("#,##0");
+  }
+
+  // 調整欄寬
+  for (var c = 1; c <= 2; c++) {
+    報表表.autoResizeColumn(c);
+  }
+
+  SpreadsheetApp.getUi().alert("✅ 每月銷售額對照表已生成！請查看「每月銷售報表」工作表。");
+}
+
+/**
+ * 檢查業務人員業績是否達標
+ */
+function 檢查業務達標() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName("銷售紀錄");
+  if (!sheet) {
+    SpreadsheetApp.getUi().alert("❌ 請先執行「初始化銷售資料」");
+    return;
+  }
+
+  var 資料 = sheet.getDataRange().getValues();
+  var 標題 = 資料[0];
+
+  // 轉成物件陣列
+  var 銷售 = [];
+  for (var i = 1; i < 資料.length; i++) {
+    var obj = {};
+    for (var j = 0; j < 標題.length; j++) {
+      obj[標題[j]] = 資料[i][j];
+    }
+    銷售.push(obj);
+  }
+
+  // 依業務累計金額
+  var 業務業績 = {};
+  for (var k = 0; k < 銷售.length; k++) {
+    var 業務 = 銷售[k]["業務"];
+    var 金額 = Number(銷售[k]["金額"]) || 0;
+    
+    if (!業務業績[業務]) {
+      業務業績[業務] = 0;
+    }
+    業務業績[業務] += 金額;
+  }
+
+  // 設定目標
+  var 業績目標 = 100000;
+
+  // 排序並準備報表資料
+  var 排序後資料 = [];
+  for (var name in 業務業績) {
+    排序後資料.push({ name: name, total: 業務業績[name] });
+  }
+  排序後資料.sort(function(a, b) { return b.total - a.total; });
+
+  var 最終資料 = [];
+  var 最終顏色 = [];
+  for (var m = 0; m < 排序後資料.length; m++) {
+    var item = 排序後資料[m];
+    var 達標 = item.total >= 業績目標;
+    最終資料.push([item.name, item.total, 達標 ? "🎉 達標" : "❌ 未達標"]);
+    var c = 達標 ? "#e8f5e9" : "#ffebee"; // 淺綠 / 淺紅
+    最終顏色.push([c, c, c]);
+  }
+
+  // 建立或清除「業務達標報表」工作表
+  var 報表表 = ss.getSheetByName("業務達標報表");
+  if (報表表) {
+    報表表.clear();
+  } else {
+    報表表 = ss.insertSheet("業務達標報表");
+  }
+
+  // 寫入標題
+  報表表.getRange("A1").setValue("📊 業務人員業績達標報表");
+  報表表.getRange("A1").setFontSize(16).setFontWeight("bold");
+  報表表.getRange("A2").setValue("業績目標：$" + 業績目標.toLocaleString());
+  報表表.getRange("A3").setValue("更新時間：" + Utilities.formatDate(new Date(), "Asia/Taipei", "yyyy/MM/dd HH:mm"));
+
+  var 標題列 = [["業務人員", "總銷售額", "達標狀態"]];
+  報表表.getRange(5, 1, 1, 3).setValues(標題列)
+    .setFontWeight("bold")
+    .setBackground("#ffe082"); // 淺黃色
+
+  // 寫入資料
+  if (最終資料.length > 0) {
+    報表表.getRange(6, 1, 最終資料.length, 3).setValues(最終資料);
+    報表表.getRange(6, 1, 最終顏色.length, 3).setBackgrounds(最終顏色);
+    報表表.getRange(6, 2, 最終資料.length, 1).setNumberFormat("#,##0");
+  }
+
+  // 調整欄寬
+  for (var col = 1; col <= 3; col++) {
+    報表表.autoResizeColumn(col);
+  }
+
+  SpreadsheetApp.getUi().alert("✅ 業務達標報表已生成！請查看「業務達標報表」工作表。");
+}
+
 // ============================================================
 // 自訂選單
 // ============================================================
@@ -376,6 +643,9 @@ function onOpen() {
     .addItem("📶 排序示範", "排序示範")
     .addSeparator()
     .addItem("📊 生成銷售摘要", "生成銷售摘要")
+    .addItem("🏆 前 10 名客戶", "找出前10名客戶")
+    .addItem("📅 每月銷售報表", "生成每月銷售報表")
+    .addItem("🎯 業務達標檢查", "檢查業務達標")
     .addItem("🧹 自動資料清理", "自動資料清理")
     .addItem("📤 匯出篩選結果", "匯出篩選結果")
     .addToUi();
